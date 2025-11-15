@@ -1,275 +1,328 @@
 # app.py
 import streamlit as st
-from PIL import Image
-import io, csv
+from PIL import Image, ImageDraw, ImageFont
+import io, csv, base64, textwrap, random
 from datetime import datetime
 import pandas as pd
 import requests
 import os
 
 # ---------- Config ----------
-st.set_page_config(page_title="Gamificación - Selección de Tutores", layout="centered")
+st.set_page_config(page_title="Gamificación — Selección de Tutores", layout="wide")
 st.markdown("""
 <style>
-/* Minimalist styling */
-.reportview-container .main {
-    padding: 1.2rem 1.2rem 2rem 1.2rem;
+/* Minimal, card-like UI */
+.app-card {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 18px;
+  box-shadow: 0 6px 20px rgba(15,23,42,0.06);
 }
-.css-1d391kg { font-size: 16px; }
-.card { border-radius: 12px; padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); background-color: white; }
-small { color: #6b7280; }
-.avatar-selected { outline: 3px solid #4f46e5; border-radius: 6px; padding: 3px; }
+.header-title { font-size: 28px; font-weight:700; }
+.small-muted { color: #6b7280; font-size:13px; }
+.progress-avatar { display:flex; align-items:center; gap:12px; }
+.center { text-align:center; }
+.shop-item { border-radius:8px; padding:10px; border:1px solid #eee; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🎮 Prototipo Gamificación — Selección de Tutores")
-st.write("Prototipo editable. Completa tus datos, elige avatar, responde casos y envía tu resultado.")
+# ---------- Utilities ----------
+def download_csv_string(csv_string, filename="resultados.csv"):
+    b64 = base64.b64encode(csv_string.encode()).decode()
+    href = f'<a href="data:file/csv;base64,{b64}" download="{filename}">📥 Descargar CSV</a>'
+    return href
 
-# ---------- ADMIN AUTH ----------
-# Preferimos leer desde st.secrets en Streamlit Cloud, si no existe usamos env var
+def fetch_image(url, size=None):
+    try:
+        r = requests.get(url, timeout=5)
+        img = Image.open(io.BytesIO(r.content)).convert("RGBA")
+        if size:
+            img = img.resize(size, Image.NEAREST)
+        return img
+    except:
+        return None
+
+# ---------- Admin auth ----------
+# Read secret from Streamlit secrets or environment
 ADMIN_PASS = None
 try:
     ADMIN_PASS = st.secrets.get("ADMIN_PASS", None)
 except Exception:
     ADMIN_PASS = os.getenv("ADMIN_PASS", None)
 
-st.sidebar.header("Administración")
-admin_input = st.sidebar.text_input("Clave admin (solo para editar)", type="password")
+st.sidebar.markdown("### 🔧 Admin (opcional)")
+admin_try = st.sidebar.text_input("Clave admin para editar/descargar:", type="password")
+is_admin = admin_try and ADMIN_PASS and admin_try == ADMIN_PASS
+if is_admin:
+    st.sidebar.success("Autenticado como admin ✅")
+elif admin_try:
+    st.sidebar.error("Clave incorrecta ❌")
 
-is_admin = False
-if ADMIN_PASS:
-    if admin_input and admin_input == ADMIN_PASS:
-        is_admin = True
-        st.sidebar.success("Autenticado como admin ✅")
-    elif admin_input:
-        st.sidebar.error("Clave incorrecta ❌")
-else:
-    st.sidebar.info("No se ha configurado ADMIN_PASS en Secrets. Añádela en Settings → Secrets si quieres bloqueo admin.")
-
-# ---------- Avatars (DiceBear pixel-art) ----------
+# ---------- Avatares (DiceBear pixel-art) ----------
 AVATAR_SEEDS = [
     "hawk","luna","milo","nova","zephyr","pixelkid","aurora","tiger","sable","echo"
 ]
-AVATAR_URLS = {s: f"https://avatars.dicebear.com/api/pixel-art/{s}.png?size=64" for s in AVATAR_SEEDS}
+AVATAR_URLS = {s: f"https://avatars.dicebear.com/api/pixel-art/{s}.png?size=128" for s in AVATAR_SEEDS}
+ACCESSORIES = [
+    {"id":"gafas","label":"🕶️ Gafas","price":30},
+    {"id":"gorra","label":"🧢 Gorra","price":20},
+    {"id":"libro","label":"📚 Libro","price":40},
+    {"id":"estrella","label":"⭐ Medalla","price":60}
+]
 
-st.sidebar.header("Modo")
-mode_default = "Jugar"
-mode = st.sidebar.selectbox("Modo", [mode_default, "Editar preguntas (admin prototipo)"] if is_admin else [mode_default], index=0)
-
-# ---------- Preguntas por defecto (editable) ----------
+# ---------- Default questions (editable) ----------
 default_questions = [
-    {
-        "type": "quiz",
-        "prompt": "Caso 1: Un estudiante no alcanza el objetivo de la sesión. ¿Qué haces?",
-        "options": ["Repetir la clase igual", "Adaptar la explicación y usar ejercicio práctico", "Sancionar al estudiante"],
-        "correct_idx": 1,
-        "points": 10,
-        "explain": "Valora adaptación pedagógica."
-    },
-    {
-        "type": "quiz",
-        "prompt": "Caso 2: ¿Cuál es la mejor estrategia para explicar un concepto abstracto?",
-        "options": ["Dar muchas definiciones teóricas", "Usar ejemplos concretos y analogías", "Pedir más tarea"],
-        "correct_idx": 1,
-        "points": 10,
-        "explain": "Preferencia por ejemplos."
-    },
-    {
-        "type": "open",
-        "prompt": "Situación: Describe brevemente cómo motivarías a un grupo con baja asistencia.",
-        "points": 10,
-        "explain": "Se evalúa criterio didáctico."
-    },
-    {
-        "type": "puzzle",
-        "prompt": "Puzzle: Ordena las acciones para planificar una clase efectiva (1-3):  A) Evaluación inicial  B) Actividad práctica C) Objetivos claros",
-        "correct_order": ["C","A","B"],
-        "points": 10,
-        "explain": "Secuencia lógica de planificación."
-    }
+    {"id":"q1","type":"case","title":"Caso 1","prompt":"Un estudiante no alcanza el objetivo de la sesión. ¿Qué harías tú como tutor?","points":10},
+    {"id":"q2","type":"mcq","title":"Mini-Quiz: Estrategia","prompt":"¿Cuál estrategia priorizas para explicar un concepto abstracto?","options":["Teoría larga","Ejemplos y analogías","Más tarea"],"points":10},
+    {"id":"q3","type":"open","title":"Situación abierta","prompt":"Describe cómo motivarías a un grupo con baja asistencia.","points":15},
+    {"id":"q4","type":"puzzle","title":"Puzzle","prompt":"Ordena la planificación: A) Evaluación inicial, B) Actividad práctica, C) Objetivos claros","correct_order":["C","A","B"],"points":10}
 ]
 
 if "questions" not in st.session_state:
     st.session_state["questions"] = default_questions.copy()
 
-# ---------- Modo Edición (solo admin) ----------
-if mode == "Editar preguntas (admin prototipo)":
-    if not is_admin:
-        st.sidebar.error("Necesitas ser admin para editar.")
-        st.stop()
-    st.sidebar.markdown("### Editor de preguntas (prototipo)")
-    if st.sidebar.button("Restaurar preguntas por defecto"):
-        st.session_state["questions"] = default_questions.copy()
-        st.sidebar.success("Restaurado.")
-    for i, q in enumerate(st.session_state["questions"]):
-        st.sidebar.markdown(f"**Pregunta {i+1}**")
-        new_prompt = st.sidebar.text_input(f"Prompt {i+1}", value=q.get("prompt",""), key=f"prompt_{i}")
-        q["prompt"] = new_prompt
-        qtype = st.sidebar.selectbox(f"Tipo {i+1}", ["quiz","open","puzzle"], index=["quiz","open","puzzle"].index(q.get("type","quiz")), key=f"type_{i}")
-        q["type"] = qtype
-        if qtype == "quiz":
-            opts = q.get("options", ["Opción 1","Opción 2","Opción 3"])
-            opts_line = st.sidebar.text_input(f"Opciones (separadas por ,) {i+1}", value=",".join(opts), key=f"opts_{i}")
-            q["options"] = [o.strip() for o in opts_line.split(",") if o.strip()]
-            corr = st.sidebar.number_input(f"Índice correcto (0-based) {i+1}", min_value=0, max_value=max(0,len(q["options"])-1), value=int(q.get("correct_idx",0)), key=f"corr_{i}")
-            q["correct_idx"] = int(corr)
-        if qtype == "puzzle":
-            order = st.sidebar.text_input(f"Orden correcto (separado por ,) {i+1}", value=",".join(q.get("correct_order",[])), key=f"order_{i}")
-            q["correct_order"] = [o.strip() for o in order.split(",") if o.strip()]
-        pts = st.sidebar.number_input(f"Puntos {i+1}", min_value=0, value=int(q.get("points",10)), key=f"pts_{i}")
-        q["points"] = int(pts)
-    if st.sidebar.button("Añadir nueva pregunta"):
-        st.session_state["questions"].append({
-            "type":"quiz","prompt":"Nueva pregunta","options":["Opción A","Opción B"],"correct_idx":0,"points":10
-        })
-        st.sidebar.success("Pregunta añadida (aparece en la lista principal).")
-    st.stop()
+# ---------- Storage for submissions (in-memory for this prototype) ----------
+if "submissions" not in st.session_state:
+    st.session_state["submissions"] = []
 
-# ---------- Modo Juego ----------
-st.subheader("1) Datos del postulante")
+# ---------- Player/session state ----------
+if "current_index" not in st.session_state:
+    st.session_state["current_index"] = 0
+if "answers" not in st.session_state:
+    st.session_state["answers"] = [""] * len(st.session_state["questions"])
+if "coins" not in st.session_state:
+    st.session_state["coins"] = 50  # starting coins for demo
+if "xp" not in st.session_state:
+    st.session_state["xp"] = 0
+if "level" not in st.session_state:
+    st.session_state["level"] = 1
+if "owned" not in st.session_state:
+    st.session_state["owned"] = []  # accessory ids
+if "avatar_choice" not in st.session_state:
+    st.session_state["avatar_choice"] = AVATAR_SEEDS[0]
+if "name" not in st.session_state:
+    st.session_state["name"] = ""
 
-# Preparar session_state para avatar temporario si no existe
-if "selected_avatar_temp" not in st.session_state:
-    st.session_state["selected_avatar_temp"] = None
-
-# Modal / formulario emergente para datos y selección de avatar (compatible con versiones)
-open_modal = st.button("📋 Completar datos personales")
-
-def show_form_and_handle_submission():
-    """Función que muestra el formulario (dentro de modal si existe, si no en expander)
-    y maneja la selección de avatar y guardado en session_state."""
-    container_used = None
-    # Si st.modal existe, usamos modal; si no, usamos expander
-    if hasattr(st, "modal"):
-        container_used = st.modal("Completa tus datos")
-    else:
-        container_used = st.expander("Completa tus datos (ventana)")
-
-    with container_used:
-        with st.form("form_modal_datos"):
-            dni = st.text_input("DNI")
-            nombres = st.text_input("Nombres y apellidos")
-            celular = st.text_input("Celular")
-            correo = st.text_input("Correo")
-            experiencia = st.text_area("Experiencia (breve)")
-            educacion = st.text_area("Educación recibida (breve)")
-
-            st.write("Elige tu avatar (clic en 'Elegir'):")
-            cols = st.columns(len(AVATAR_SEEDS))
-            # mostrar imágenes y botones para seleccionar; guardamos elección en session_state['selected_avatar_temp']
-            for c, seed in zip(cols, AVATAR_SEEDS):
-                url = AVATAR_URLS[seed]
-                try:
-                    r = requests.get(url, timeout=5)
-                    img = Image.open(io.BytesIO(r.content))
-                    # dibujamos la imagen (si está seleccionada, no cambia la lógica visual excepto el texto)
-                    c.image(img, caption=seed, use_column_width=False)
-                except Exception:
-                    c.write("Avatar")
-                if c.button("Elegir", key=f"avatar_btn_{seed}"):
-                    st.session_state["selected_avatar_temp"] = seed
-
-            enviar = st.form_submit_button("Guardar y cerrar")
-
-        if enviar:
-            # guardar datos en session_state para uso posterior
-            st.session_state["dni"] = dni
-            st.session_state["nombres"] = nombres
-            st.session_state["celular"] = celular
-            st.session_state["correo"] = correo
-            st.session_state["experiencia"] = experiencia
-            st.session_state["educacion"] = educacion
-            # si el usuario no seleccionó explicitamente avatar, usamos la temporal o el primero
-            chosen = st.session_state.get("selected_avatar_temp", AVATAR_SEEDS[0])
-            st.session_state["avatar_choice"] = chosen
-            st.success("Datos guardados correctamente ✅")
-            # recargar la app para que muestre el resumen fuera del formulario
-            st.experimental_rerun()
-
-# Ejecutar el flujo si el usuario hizo click
-if open_modal:
-    try:
-        show_form_and_handle_submission()
-    except Exception as e:
-        # En caso de error inesperado, mostrar mensaje amistoso y pedir revisar logs
-        st.error("Ocurrió un error al abrir el formulario. Revisa los logs en Streamlit Cloud (Manage app).")
-        # también imprimimos en la app (útil para debug corto) sin exponer datos sensibles
-        st.write(f"Error técnico: {e}")
-
-# Mostrar resumen si ya hay datos guardados
-if st.session_state.get("nombres"):
-    # mostrar mini avatar junto al nombre
-    avatar_name = st.session_state.get("avatar_choice", AVATAR_SEEDS[0])
-    avatar_url = AVATAR_URLS.get(avatar_name)
+# ---------- Header UI ----------
+left, right = st.columns([3,1])
+with left:
+    st.markdown("<div class='app-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='header-title'>🎮 Gamificación — Selección de Tutores</div>", unsafe_allow_html=True)
+    st.markdown("<div class='small-muted'>Prototipo interactivo. Responde libremente; las respuestas no se muestran como 'correctas' al instante.</div>", unsafe_allow_html=True)
+with right:
+    # Show avatar + coins + level
+    avatar_url = AVATAR_URLS.get(st.session_state["avatar_choice"])
     if avatar_url:
+        img = fetch_image(avatar_url, size=(96,96))
+        if img:
+            st.image(img)
+    st.markdown(f"**Nivel**: {st.session_state['level']}  \n**XP**: {st.session_state['xp']}  \n**Coins**: {st.session_state['coins']}")
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+st.write("")  # spacing
+
+# ---------- Main interactive card ----------
+col_main, col_side = st.columns([3,1])
+with col_main:
+    st.markdown("<div class='app-card'>", unsafe_allow_html=True)
+    st.header("Misión: Demuestra tu potencial como tutor")
+    st.markdown("Avanza pregunta a pregunta. Ganas **XP** por participar y **Coins** por completar niveles. Con las Coins podrás personalizar tu avatar en la Tienda.")
+    st.write("---")
+
+    # Progress / level bar
+    total_q = len(st.session_state["questions"])
+    progress = int((st.session_state["current_index"] / max(1,total_q)) * 100)
+    st.progress(progress)
+    st.markdown(f"Pregunta {st.session_state['current_index']+1} de {total_q}")
+
+    q = st.session_state["questions"][st.session_state["current_index"]]
+    st.subheader(f"{q.get('title','Pregunta')}")
+    st.markdown(f"**{q.get('prompt','')}**")
+
+    # Dynamic area for question types — no immediate correctness feedback
+    if q.get("type") == "mcq":
+        opts = q.get("options", [])
+        prev = st.session_state["answers"][st.session_state["current_index"]]
+        sel = st.radio("Elige una opción:", opts, index= opts.index(prev) if prev in opts else 0)
+        st.session_state["answers"][st.session_state["current_index"]] = sel
+
+    elif q.get("type") == "case" or q.get("type") == "open":
+        prev = st.session_state["answers"][st.session_state["current_index"]]
+        txt = st.text_area("Tu respuesta (escribe con claridad):", value=prev, height=180)
+        st.session_state["answers"][st.session_state["current_index"]] = txt
+
+    elif q.get("type") == "puzzle":
+        prev = st.session_state["answers"][st.session_state["current_index"]]
+        order = st.text_input("Ingresa el orden (ej: C,A,B):", value=prev)
+        st.session_state["answers"][st.session_state["current_index"]] = order
+
+    # Optional hint / motivation (avatar gives short encouragement)
+    hints = [
+        "Tu avatar cree en ti: respira hondo y responde con calma.",
+        "Recuerda: explicar con ejemplos facilita el aprendizaje.",
+        "Enfócate en la estrategia: ¿cómo guías al estudiante paso a paso?"
+    ]
+    st.info(random.choice(hints))
+
+    # Navigation buttons (no immediate judgement)
+    nav_col1, nav_col2, nav_col3 = st.columns(3)
+    with nav_col1:
+        if st.button("← Anterior") and st.session_state["current_index"] > 0:
+            st.session_state["current_index"] -= 1
+    with nav_col2:
+        if st.button("Guardar y siguiente →"):
+            # reward small coins for progressing
+            st.session_state["coins"] += 5
+            st.session_state["xp"] += 10
+            # level up logic
+            if st.session_state["xp"] >= st.session_state["level"] * 100:
+                st.session_state["level"] += 1
+                st.success(f"¡Subiste al nivel {st.session_state['level']}! +50 coins")
+                st.session_state["coins"] += 50
+            if st.session_state["current_index"] < total_q - 1:
+                st.session_state["current_index"] += 1
+            else:
+                st.success("Has llegado al final. Pulsa Enviar para registrar tus respuestas.")
+    with nav_col3:
+        if st.button("🚩 Marcar para revisar después"):
+            st.session_state.setdefault("flagged", []).append(q.get("id"))
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with col_side:
+    st.markdown("<div class='app-card'>", unsafe_allow_html=True)
+    st.subheader("🎯 Estado del jugador")
+    st.markdown(f"**Nombre:** {st.session_state.get('name','(sin nombre)')}")
+    st.markdown(f"**Avatar:** {st.session_state.get('avatar_choice')}")
+    st.markdown(f"**Level:** {st.session_state['level']}  •  **XP:** {st.session_state['xp']}")
+    st.markdown(f"**Coins:** {st.session_state['coins']}")
+
+    st.write("---")
+    st.subheader("👕 Tienda de accesorios")
+    st.markdown("Compra accesorios para tu avatar con las Coins ganadas.")
+    for item in ACCESSORIES:
+        col_a, col_b = st.columns([2,1])
+        with col_a:
+            st.markdown(f"**{item['label']}** — {item['price']} coins")
+        with col_b:
+            if item["id"] in st.session_state["owned"]:
+                st.button("Poseído", key=f"owned_{item['id']}", disabled=True)
+            else:
+                if st.button("Comprar", key=f"buy_{item['id']}"):
+                    if st.session_state["coins"] >= item["price"]:
+                        st.session_state["coins"] -= item["price"]
+                        st.session_state["owned"].append(item["id"])
+                        st.success(f"Compraste {item['label']} ✅")
+                    else:
+                        st.error("No tienes suficientes Coins.")
+
+    st.write("---")
+    st.subheader("🖼 Elegir avatar")
+    cols = st.columns(3)
+    for i, seed in enumerate(AVATAR_SEEDS):
+        url = AVATAR_URLS[seed]
         try:
-            r = requests.get(avatar_url, timeout=5)
-            img = Image.open(io.BytesIO(r.content))
-            st.image(img, width=64)
-        except Exception:
-            pass
-    st.markdown(f"**Postulante:** {st.session_state.get('nombres')}  \n**Avatar:** {avatar_name}")
-else:
-    st.info("Aún no has completado tus datos. Haz clic en '📋 Completar datos personales'.")
+            img = fetch_image(url, size=(72,72))
+            if cols[i % 3].button(seed, key=f"choose_{seed}"):
+                st.session_state["avatar_choice"] = seed
+                st.success(f"Avatar seleccionado: {seed}")
+            cols[i % 3].image(img)
+        except:
+            cols[i % 3].write(seed)
 
-st.markdown("---")
-st.subheader("2) Evaluación: casos, quiz y puzzle")
-total_score = 0
-answers_for_csv = []
+    st.write("---")
+    st.subheader("💬 Mensajes motivadores")
+    if st.button("Recibir mensaje"):
+        motivational = [
+            "Sigue así — la práctica mejora la enseñanza.",
+            "Pequeños pasos: cada respuesta es aprendizaje.",
+            "Buen trabajo: sé claro, paciente y empático."
+        ]
+        st.success(random.choice(motivational))
 
-for idx, q in enumerate(st.session_state["questions"]):
-    st.markdown(f"**Pregunta {idx+1}.**")
-    st.write(q.get("prompt",""))
-    if q["type"] == "quiz":
-        opt = st.radio("", q["options"], key=f"q_{idx}")
-        sel_idx = q["options"].index(opt)
-        correct = (sel_idx == q.get("correct_idx",0))
-        if correct:
-            st.write("✅ Opción evaluada como correcta.")
-            total_score += q.get("points",10)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ---------- Submit / Save final results ----------
+st.write("")  # spacing
+st.markdown("<div class='app-card'>", unsafe_allow_html=True)
+st.header("✅ Enviar respuestas (registro final)")
+st.markdown("Cuando termines, envía tu intento. Tú decides cuándo está listo. Nosotros descargamos los resultados para evaluar.")
+
+with st.expander("Vista previa de tus respuestas (tus respuestas NO se califican automáticamente)"):
+    summary = []
+    for i, qq in enumerate(st.session_state["questions"]):
+        ans = st.session_state["answers"][i] if i < len(st.session_state["answers"]) else ""
+        st.markdown(f"**{qq.get('title')}** — {ans if ans else '*Sin respuesta*'}")
+        summary.append(ans)
+
+col_send1, col_send2 = st.columns([1,1])
+with col_send1:
+    if st.button("Enviar mi intento (guardar registro)"):
+        # Basic validation: require name and at least one answer
+        if not st.session_state.get("name"):
+            st.warning("Antes de enviar, escribe tu nombre en la barra lateral (campo Nombre).")
         else:
-            st.write("❌ Opción considerada no óptima.")
-        answers_for_csv.append(opt)
-    elif q["type"] == "open":
-        resp = st.text_area("", key=f"open_{idx}", placeholder="Escribe tu respuesta...")
-        answers_for_csv.append(resp)
-    elif q["type"] == "puzzle":
-        st.write("Ingresa el orden correcto (separado por comas). Usa etiquetas propuestas o letras.")
-        resp = st.text_input("Tu orden", key=f"puz_{idx}", placeholder="Ej: C,A,B")
-        user_order = [s.strip() for s in resp.split(",") if s.strip()]
-        if user_order and "correct_order" in q and user_order == q["correct_order"]:
-            st.write("✅ Orden correcto.")
-            total_score += q.get("points",10)
-        elif user_order:
-            st.write("❌ Orden distinto al esperado.")
-        answers_for_csv.append(resp)
+            now = datetime.now().isoformat()
+            row = {
+                "timestamp": now,
+                "name": st.session_state.get("name"),
+                "dni": st.session_state.get("dni",""),
+                "avatar": st.session_state.get("avatar_choice",""),
+                "coins": st.session_state["coins"],
+                "level": st.session_state["level"],
+                "xp": st.session_state["xp"],
+                "answers": summary
+            }
+            # Append to in-memory submissions
+            st.session_state["submissions"].append(row)
+            st.success("Intento registrado. Gracias — pronto revisaremos las respuestas.")
+with col_send2:
+    if st.button("Reiniciar sesión (nuevo intento)"):
+        # Reset player progress but keep questions
+        st.session_state["current_index"] = 0
+        st.session_state["answers"] = [""] * len(st.session_state["questions"])
+        st.session_state["coins"] = 50
+        st.session_state["xp"] = 0
+        st.session_state["level"] = 1
+        st.session_state["owned"] = []
+        st.success("Listo para un nuevo intento.")
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ---------- Admin panel (only visible with correct secret) ----------
+if is_admin:
     st.markdown("---")
+    st.header("🔐 Panel Admin")
+    st.markdown("Desde aquí puedes editar preguntas, descargar todos los registros y resetear el historial.")
 
-st.subheader(f"Resultado provisional: {total_score} pts")
+    # Edit questions inline
+    for i, q in enumerate(st.session_state["questions"]):
+        st.markdown(f"**Pregunta {i+1} ({q.get('type')})**")
+        new_title = st.text_input(f"Título {i}", q.get("title",""), key=f"adm_title_{i}")
+        new_prompt = st.text_input(f"Prompt {i}", q.get("prompt",""), key=f"adm_prompt_{i}")
+        st.session_state["questions"][i]["title"] = new_title
+        st.session_state["questions"][i]["prompt"] = new_prompt
+        if q.get("type") == "mcq":
+            opts = st.text_input(f"Opciones (separadas por ,) {i}", ",".join(q.get("options",[])), key=f"adm_opts_{i}")
+            st.session_state["questions"][i]["options"] = [o.strip() for o in opts.split(",") if o.strip()]
+        st.write("---")
 
-# ---------- Envío / Guardado ----------
-if st.button("Enviar y generar resultado (descargar CSV)"):
-    now = datetime.now().isoformat()
-    header = ["timestamp","dni","nombres","celular","correo","avatar","score","experiencia","educacion"] + [f"q{i+1}" for i in range(len(st.session_state["questions"]))]
-    row = [
-        now,
-        st.session_state.get("dni",""),
-        st.session_state.get("nombres",""),
-        st.session_state.get("celular",""),
-        st.session_state.get("correo",""),
-        st.session_state.get("avatar_choice",""),
-        total_score,
-        st.session_state.get("experiencia",""),
-        st.session_state.get("educacion",""),
-    ] + answers_for_csv
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(header)
-    writer.writerow(row)
-    st.success("Resultado generado. Descarga abajo o copia el contenido.")
-    st.download_button("Descargar resultado (CSV)", output.getvalue(), file_name=f"resultado_{st.session_state.get('nombres','postulante')[:20]}.csv", mime="text/csv")
-    df = pd.DataFrame([row], columns=header)
-    st.table(df)
+    if st.button("Guardar cambios (admin)"):
+        st.success("Cambios guardados.")
 
-st.markdown("___")
-st.caption("Prototipo desarrollado por Gabriel — edición y uso para presentación. No use datos sensibles en demos públicas.")
+    # Download submissions as CSV
+    if st.session_state["submissions"]:
+        df = pd.DataFrame(st.session_state["submissions"])
+        csv_txt = df.to_csv(index=False)
+        st.markdown(download_csv_string(csv_txt, filename="submissions.csv"), unsafe_allow_html=True)
+    else:
+        st.info("No hay registros aún.")
+
+    if st.button("Resetear historial (borrar registros)"):
+        st.session_state["submissions"] = []
+        st.success("Historial borrado.")
+
+# ---------- Footer ----------
+st.markdown("---")
+st.caption("Prototipo gamificado para selección de tutores — versión demo. Para almacenar resultados permanentemente conecta Google Sheets o una base de datos.")
