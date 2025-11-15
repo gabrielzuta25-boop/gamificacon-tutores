@@ -1,100 +1,114 @@
-# app.py - Versión limpia y profesional sin modal, todo en la página
+# app.py (corregido: sin errores NameError, sin st.button() dentro de forms,
+# con guardado de borrador en data/drafts.json y envíos en data/submissions.json)
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import base64
-import random
-import os
+import json, os, base64, random
 
-# ---------- Config & CSS ----------
+# ---------- Config y CSS ----------
 st.set_page_config(page_title="Gamificación — Selección de Tutores", layout="wide")
 st.markdown("""
 <style>
-:root {
-  --bg: #0b1220;
-  --card: linear-gradient(180deg,#0f1724,#0c1320);
-  --muted: #9aa7bf;
-  --accent: #7c3aed;
-  --text: #e6eef8;
-  --glass: rgba(255,255,255,0.02);
-}
-html, body, [class*="css"] { background: var(--bg); color: var(--text); }
-.container { max-width:1200px; margin:18px auto; font-family:Inter, system-ui, sans-serif; }
-.card { background: var(--card); padding:16px; border-radius:12px; box-shadow: 0 8px 28px rgba(2,6,23,0.6); border:1px solid rgba(255,255,255,0.03); }
-.title { font-size:22px; font-weight:700; color:var(--text); margin-bottom:4px; }
-.muted { color:var(--muted); font-size:13px; margin-bottom:10px; }
-.row { display:flex; gap:18px; align-items:flex-start; }
-.col-2 { flex:2; }
-.col-1 { flex:1; }
-.avatar { font-size:56px; display:inline-block; padding:10px; border-radius:10px; background:var(--glass); }
-.small { font-size:13px; color:var(--muted); }
-.progress-steps { display:flex; gap:8px; align-items:center; margin-top:6px; }
-.step-dot { width:12px; height:12px; border-radius:6px; background:#1f2937; border:1px solid rgba(255,255,255,0.03); }
-.step-dot.done { background:var(--accent); box-shadow:0 0 8px rgba(124,58,237,0.12); }
-.question-area { min-height:170px; margin-top:8px; }
-.buttons { display:flex; gap:8px; margin-top:12px; }
-.btn { background:#111827; color:var(--text); padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); cursor:pointer; }
-.shop-item { display:flex; justify-content:space-between; align-items:center; padding:8px; border-radius:8px; background:rgba(255,255,255,0.02); margin-bottom:8px; }
-.final-avatar { text-align:center; }
-.footer-note { color:var(--muted); font-size:12px; margin-top:8px; }
+:root{--bg:#0b1220;--card:linear-gradient(180deg,#0f1724,#0c1320);--muted:#9aa7bf;
+--accent:#7c3aed;--text:#e6eef8;--glass:rgba(255,255,255,0.02)}
+html,body,[class*="css"]{background:var(--bg);color:var(--text)}
+.container{max-width:1200px;margin:18px auto;font-family:Inter,system-ui,sans-serif}
+.card{background:var(--card);padding:16px;border-radius:12px;box-shadow:0 8px 28px rgba(2,6,23,0.6);border:1px solid rgba(255,255,255,0.03)}
+.title{font-size:22px;font-weight:700;color:var(--text);margin-bottom:6px}
+.muted{color:var(--muted);font-size:13px;margin-bottom:10px}
+.row{display:flex;gap:18px;align-items:flex-start}
+.col-2{flex:2}.col-1{flex:1}
+.avatar{font-size:56px;display:inline-block;padding:10px;border-radius:10px;background:var(--glass)}
+.small{font-size:13px;color:var(--muted)}
+.progress-steps{display:flex;gap:8px;align-items:center;margin-top:6px}
+.step-dot{width:12px;height:12px;border-radius:6px;background:#1f2937;border:1px solid rgba(255,255,255,0.03)}
+.step-dot.done{background:var(--accent);box-shadow:0 0 8px rgba(124,58,237,0.12)}
+.question-area{min-height:160px;margin-top:8px}
+.buttons{display:flex;gap:8px;margin-top:12px}
+.btn{background:#111827;color:var(--text);padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.03)}
+.shop-item{display:flex;justify-content:space-between;align-items:center;padding:8px;border-radius:8px;background:rgba(255,255,255,0.02);margin-bottom:8px}
+.final-avatar{text-align:center}
+.footer-note{color:var(--muted);font-size:12px;margin-top:8px}
 </style>
 """, unsafe_allow_html=True)
 
 # ---------- Helpers ----------
+DATA_DIR = "data"
+DRAFTS_FILE = os.path.join(DATA_DIR, "drafts.json")
+SUBMISSIONS_FILE = os.path.join(DATA_DIR, "submissions.json")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+def load_json(path):
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def save_json(path, obj):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+
 def csv_download_link_from_df(df, filename="submissions.csv"):
     csv = df.to_csv(index=False)
     b64 = base64.b64encode(csv.encode()).decode()
     return f'<a href="data:file/csv;base64,{b64}" download="{filename}">📥 Descargar CSV</a>'
 
-# ---------- Content: questions ----------
+# ---------- Contenido: preguntas ----------
 QUESTIONS = [
-    # 5 open/opinion
     {"id":"o1","type":"open","title":"Opinión 1","prompt":"¿Cuál crees que es la característica más importante en un tutor preuniversitario?"},
     {"id":"o2","type":"open","title":"Opinión 2","prompt":"Describe tu estilo de enseñanza en 2-3 frases."},
     {"id":"o3","type":"open","title":"Opinión 3","prompt":"¿Qué método usas para mantener la atención en clase?"},
     {"id":"o4","type":"open","title":"Opinión 4","prompt":"¿Cómo organizas una sesión para un tema difícil?"},
     {"id":"o5","type":"open","title":"Opinión 5","prompt":"¿Qué diferencias harías entre explicar a nivel escolar y preuniversitario?"},
-    # 3 cases (textual scenarios)
     {"id":"c1","type":"case","title":"Caso 1","prompt":"Un alumno está frustrado y evita participar. Describe cómo lo abordarías paso a paso."},
-    {"id":"c2","type":"case","title":"Caso 2","prompt":"El grupo es heterogéneo: algunos avanzan rápido, otros no. ¿Cómo organizarías la clase?"}, 
+    {"id":"c2","type":"case","title":"Caso 2","prompt":"El grupo es heterogéneo: algunos avanzan rápido, otros no. ¿Cómo organizarías la clase?"},
     {"id":"c3","type":"case","title":"Caso 3","prompt":"Hay un conflicto entre dos estudiantes que afecta la dinámica. ¿Qué medidas tomarías?"},
-    # 2 puzzles (order)
     {"id":"p1","type":"puzzle","title":"Puzzle 1","prompt":"Ordena: A) Actividad práctica, B) Objetivos claros, C) Evaluación inicial. (ej: B,C,A)","correct":["B","C","A"]},
     {"id":"p2","type":"puzzle","title":"Puzzle 2","prompt":"Ordena: A) Resumen, B) Retroalimentación, C) Tarea sugerida. (ej: A,B,C)","correct":["A","B","C"]},
 ]
 TOTAL = len(QUESTIONS)
 
-# ---------- Session init ----------
-if "idx" not in st.session_state:
-    st.session_state.idx = 0
-if "answers" not in st.session_state:
-    st.session_state.answers = [""] * TOTAL
-if "name" not in st.session_state:
-    st.session_state.name = ""
-if "dni" not in st.session_state:
-    st.session_state.dni = ""
-if "cel" not in st.session_state:
-    st.session_state.cel = ""
-if "email" not in st.session_state:
-    st.session_state.email = ""
-if "exp" not in st.session_state:
-    st.session_state.exp = ""
-if "edu" not in st.session_state:
-    st.session_state.edu = ""
-if "avatar" not in st.session_state:
-    st.session_state.avatar = "🛡️"  # default emoji avatar
-if "coins" not in st.session_state:
-    st.session_state.coins = 50
-if "xp" not in st.session_state:
-    st.session_state.xp = 0
-if "level" not in st.session_state:
-    st.session_state.level = 1
-if "owned" not in st.session_state:
-    st.session_state.owned = []
-if "submissions" not in st.session_state:
-    st.session_state.submissions = []
+# ---------- Estado de la sesión (inicializar) ----------
+ss = st.session_state
+if "idx" not in ss:
+    ss.idx = 0
+if "answers" not in ss:
+    ss.answers = [""] * TOTAL
+if "name" not in ss:
+    ss.name = ""
+if "dni" not in ss:
+    ss.dni = ""
+if "cel" not in ss:
+    ss.cel = ""
+if "email" not in ss:
+    ss.email = ""
+if "exp" not in ss:
+    ss.exp = ""
+if "edu" not in ss:
+    ss.edu = ""
+if "avatar" not in ss:
+    ss.avatar = "🛡️"
+if "coins" not in ss:
+    ss.coins = 50
+if "xp" not in ss:
+    ss.xp = 0
+if "level" not in ss:
+    ss.level = 1
+if "owned" not in ss:
+    ss.owned = []
+if "submissions" not in ss:
+    # try to load existing submissions file
+    subs = load_json(SUBMISSIONS_FILE)
+    if isinstance(subs, list):
+        ss.submissions = subs
+    else:
+        ss.submissions = []
 
-# Accessories & avatars definitions
+# accessories and avatars
 AVATARS = [
     {"id":"knight","emoji":"🛡️","label":"Defensor"},
     {"id":"mage","emoji":"🧙","label":"Estratega"},
@@ -107,124 +121,175 @@ ACCESSORIES = [
     {"id":"estrella","emoji":"⭐","label":"Medalla","price":60},
 ]
 
-# ---------- Page container ----------
+# ---------- Intentar restaurar borrador por DNI si existe ----------
+drafts = load_json(DRAFTS_FILE)
+if ss.get("dni") and ss.dni in drafts:
+    # restore only if session answers empty (to avoid overwriting current typing)
+    if not any(ss.answers):
+        record = drafts[ss.dni]
+        ss.answers = record.get("answers", ss.answers)
+        ss.name = record.get("name", ss.name)
+        ss.email = record.get("email", ss.email)
+        ss.cel = record.get("cel", ss.cel)
+        ss.exp = record.get("exp", ss.exp)
+        ss.edu = record.get("edu", ss.edu)
+        ss.avatar = record.get("avatar", ss.avatar)
+        ss.coins = record.get("coins", ss.coins)
+        ss.xp = record.get("xp", ss.xp)
+        ss.level = record.get("level", ss.level)
+
+# ---------- Layout principal ----------
 st.markdown('<div class="container">', unsafe_allow_html=True)
 
-# ---------- Personal data form (CORREGIDO) ----------
-# Coloca este bloque donde esté el formulario de datos (reemplaza el anterior)
-st.markdown('<div class="card">', unsafe_allow_html=True)
-st.markdown('<div class="title">Datos personales (confidencial)</div>', unsafe_allow_html=True)
-st.markdown('<div class="muted">Completa estos datos antes de avanzar.</div>', unsafe_allow_html=True)
-
-# Build a list of avatar choices labels for the radio
-avatar_labels = [f'{a["emoji"]}  {a["label"]}' for a in AVATARS]
-default_idx = 0
-for i,a in enumerate(AVATARS):
-    if a["emoji"] == st.session_state.avatar:
-        default_idx = i
-
-with st.form("personal_form_fixed"):
-    name_in = st.text_input("Nombres y apellidos", value=st.session_state.name)
-    dni_in = st.text_input("DNI", value=st.session_state.dni)
-    cel_in = st.text_input("Celular", value=st.session_state.cel)
-    email_in = st.text_input("Correo", value=st.session_state.email)
-    exp_in = st.text_area("Experiencia (breve)", value=st.session_state.exp, height=80)
-    edu_in = st.text_area("Educación recibida (breve)", value=st.session_state.edu, height=80)
-
-    st.markdown("**Selecciona un avatar**")
-    avatar_choice = st.radio("", avatar_labels, index=default_idx)
-
-    # Submit button for form
-    submitted_personal = st.form_submit_button("Guardar datos")
-
-if submitted_personal:
-    # Save into session_state
-    st.session_state.name = name_in
-    st.session_state.dni = dni_in
-    st.session_state.cel = cel_in
-    st.session_state.email = email_in
-    st.session_state.exp = exp_in
-    st.session_state.edu = edu_in
-    # extract emoji from selected label
-    st.session_state.avatar = avatar_choice.split()[0]
-    st.success("Datos guardados ✔️")
-
-
-with top_col_right:
+# TOP: data form (visible always) + small profile
+top_left, top_right = st.columns([3,1], gap="large")
+with top_left:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    # profile summary small card
-    st.markdown(f"<div style='display:flex;align-items:center;gap:12px'><div class='avatar'>{st.session_state.avatar}</div><div><strong style='font-size:16px'>{st.session_state.name or '(Sin nombre)'}</strong><div class='small'>Nivel {st.session_state.level} • XP {st.session_state.xp}</div></div></div>", unsafe_allow_html=True)
-    st.markdown("<div style='margin-top:12px'><strong>Coins</strong></div>", unsafe_allow_html=True)
-    st.markdown(f"<div style='font-size:20px'>{st.session_state.coins} 💰</div>", unsafe_allow_html=True)
+    st.markdown('<div class="title">🎮 Gamificación — Selección de Tutores</div>', unsafe_allow_html=True)
+    st.markdown('<div class="muted">Responde con sinceridad. Tus respuestas son confidenciales y se evaluarán internamente.</div>', unsafe_allow_html=True)
+
+    # ---- Personal form (CORRECTO: st.form + st.form_submit_button) ----
+    with st.form("personal_form_v2"):
+        name_in = st.text_input("Nombres y apellidos", value=ss.name)
+        dni_in = st.text_input("DNI", value=ss.dni)
+        cel_in = st.text_input("Celular", value=ss.cel)
+        email_in = st.text_input("Correo", value=ss.email)
+        exp_in = st.text_area("Experiencia (breve)", value=ss.exp, height=80)
+        edu_in = st.text_area("Educación recibida (breve)", value=ss.edu, height=80)
+
+        # avatar selection as radio (válido dentro de form)
+        avatar_options = [f'{a["emoji"]}  {a["label"]}' for a in AVATARS]
+        default_avatar_idx = 0
+        for i,a in enumerate(AVATARS):
+            if a["emoji"] == ss.avatar:
+                default_avatar_idx = i
+        avatar_choice = st.radio("Selecciona un avatar", avatar_options, index=default_avatar_idx)
+
+        save_personal = st.form_submit_button("Guardar datos")
+    # if submitted, store in session_state AND save draft file
+    if save_personal:
+        ss.name = name_in
+        ss.dni = dni_in
+        ss.cel = cel_in
+        ss.email = email_in
+        ss.exp = exp_in
+        ss.edu = edu_in
+        ss.avatar = avatar_choice.split()[0]
+        st.success("Datos guardados ✔️")
+
+        # save draft to disk keyed by DNI (si hay DNI)
+        if ss.dni:
+            drafts = load_json(DRAFTS_FILE)
+            drafts[ss.dni] = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "name": ss.name,
+                "dni": ss.dni,
+                "cel": ss.cel,
+                "email": ss.email,
+                "exp": ss.exp,
+                "edu": ss.edu,
+                "avatar": ss.avatar,
+                "answers": ss.answers,
+                "coins": ss.coins,
+                "xp": ss.xp,
+                "level": ss.level
+            }
+            save_json(DRAFTS_FILE, drafts)
+
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ---------- Main content: questions + right side shop/progress ----------
+with top_right:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown(f"<div style='display:flex;align-items:center;gap:12px'><div class='avatar'>{ss.avatar}</div><div><strong style='font-size:16px'>{ss.name or '(Sin nombre)'}</strong><div class='small'>Nivel {ss.level} • XP {ss.xp}</div></div></div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-top:12px'><strong>Coins</strong></div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='font-size:20px'>{ss.coins} 💰</div>", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# ---------- Main question area + right shop/progress ----------
 main_col, side_col = st.columns([3,1], gap="large")
 
-# Main column with question card
 with main_col:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    idx = st.session_state.idx
+    idx = ss.idx
     q = QUESTIONS[idx]
-    # Header with step and title
     st.markdown(f"### Paso {idx+1} de {TOTAL} — {q['title']}")
     st.markdown(f"**{q['prompt']}**")
     st.markdown('<div class="question-area">', unsafe_allow_html=True)
-    # Inputs by type
-    if q["type"] in ("open", "case"):
-        txt = st.text_area("Tu respuesta (confidencial):", value=st.session_state.answers[idx], key=f"ans_{idx}", height=180)
-        st.session_state.answers[idx] = txt
+
+    # input
+    if q["type"] in ("open","case"):
+        val = st.text_area("Tu respuesta (confidencial):", value=ss.answers[idx], key=f"answer_{idx}", height=160)
+        ss.answers[idx] = val
     elif q["type"] == "puzzle":
-        txt = st.text_input("Orden (ej: B,A,C):", value=st.session_state.answers[idx], key=f"ans_{idx}")
-        st.session_state.answers[idx] = txt
+        val = st.text_input("Orden (ej: B,A,C):", value=ss.answers[idx], key=f"answer_{idx}")
+        ss.answers[idx] = val
+
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # Buttons row
-    cols = st.columns([1,1,1])
-    with cols[0]:
+    # navigation buttons (NO buttons inside other forms)
+    c1, c2, c3 = st.columns(3)
+    with c1:
         if st.button("← Anterior"):
-            if st.session_state.idx > 0:
-                st.session_state.idx -= 1
-    with cols[1]:
+            if ss.idx > 0:
+                ss.idx -= 1
+    with c2:
         if st.button("Guardar y siguiente →"):
             # require name
-            if not st.session_state.name:
-                st.warning("Primero guarda tus datos personales (arriba).")
+            if not ss.name:
+                st.warning("Guarda tus datos personales arriba antes de continuar.")
             else:
-                # reward progression
-                st.session_state.coins += 7
-                st.session_state.xp += 12
-                if st.session_state.xp >= st.session_state.level * 100:
-                    st.session_state.level += 1
-                    st.session_state.coins += 30
-                    st.success(f"¡subiste al nivel {st.session_state.level}! +30 coins")
-                if st.session_state.idx < TOTAL - 1:
-                    st.session_state.idx += 1
+                # reward and autosave draft by DNI
+                ss.coins += 7
+                ss.xp += 12
+                if ss.xp >= ss.level * 100:
+                    ss.level += 1
+                    ss.coins += 30
+                    st.success(f"¡Subiste al nivel {ss.level}! +30 coins")
+                # save draft
+                if ss.dni:
+                    drafts = load_json(DRAFTS_FILE)
+                    drafts[ss.dni] = {
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "name": ss.name,
+                        "dni": ss.dni,
+                        "cel": ss.cel,
+                        "email": ss.email,
+                        "exp": ss.exp,
+                        "edu": ss.edu,
+                        "avatar": ss.avatar,
+                        "answers": ss.answers,
+                        "coins": ss.coins,
+                        "xp": ss.xp,
+                        "level": ss.level
+                    }
+                    save_json(DRAFTS_FILE, drafts)
+                # advance
+                if ss.idx < TOTAL - 1:
+                    ss.idx += 1
                 else:
-                    st.success("Has completado todas las preguntas. Pulsa 'Enviar todo' abajo cuando quieras.")
-    with cols[2]:
+                    st.success("Has llegado al final. Pulsa ENVIAR todo cuando quieras.")
+    with c3:
         if st.button("Reiniciar intento"):
-            st.session_state.idx = 0
-            st.session_state.answers = [""] * TOTAL
-            st.session_state.coins = 50
-            st.session_state.xp = 0
-            st.session_state.level = 1
-            st.session_state.owned = []
-            st.success("Sesión reiniciada.")
+            ss.idx = 0
+            ss.answers = [""] * TOTAL
+            ss.coins = 50
+            ss.xp = 0
+            ss.level = 1
+            ss.owned = []
+            st.success("Intento reiniciado.")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-# Side column: progress and shop
 with side_col:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    # Progress dots
+    # progress dots
     dots_html = "<div class='progress-steps'>"
     for i in range(TOTAL):
-        cls = "step-dot done" if i <= st.session_state.idx else "step-dot"
+        cls = "step-dot done" if i <= ss.idx else "step-dot"
         dots_html += f"<div class='{cls}' title='Paso {i+1}'></div>"
     dots_html += "</div>"
     st.markdown(dots_html, unsafe_allow_html=True)
-    st.markdown(f"<div class='small'>Paso {st.session_state.idx+1} de {TOTAL}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='small'>Paso {ss.idx+1} de {TOTAL}</div>", unsafe_allow_html=True)
     st.markdown("---")
     st.markdown("<strong>🛍️ Tienda</strong>", unsafe_allow_html=True)
     st.markdown("<div class='small'>Personaliza tu avatar con accesorios (emoji).</div>", unsafe_allow_html=True)
@@ -233,50 +298,57 @@ with side_col:
         with cols[0]:
             st.markdown(f"{item['emoji']} <strong>{item['label']}</strong> <span class='small'>- {item['price']} coins</span>", unsafe_allow_html=True)
         with cols[1]:
-            if item["id"] in st.session_state.owned:
+            if item["id"] in ss.owned:
                 st.button("Comprado", key=f"owned_{item['id']}", disabled=True)
             else:
                 if st.button("Comprar", key=f"buy_{item['id']}"):
-                    if st.session_state.coins >= item['price']:
-                        st.session_state.coins -= item['price']
-                        st.session_state.owned.append(item["id"])
+                    if ss.coins >= item['price']:
+                        ss.coins -= item['price']
+                        ss.owned.append(item['id'])
                         st.success(f"Compraste {item['label']} ✅")
                     else:
                         st.error("No tienes suficientes coins.")
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ---------- Final submission card ----------
+# ---------- Enviar final ----------
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.markdown("### ✅ Enviar todo (registro confidencial)")
 st.markdown('<div class="small">Cuando termines todas las preguntas, pulsa ENVIAR. Nosotros evaluamos internamente; tus respuestas no se muestran a otros usuarios.</div>', unsafe_allow_html=True)
 if st.button("Enviar todo"):
-    if not st.session_state.name:
-        st.warning("Completa tus datos antes de enviar (arriba).")
+    if not ss.name:
+        st.warning("Por favor, completa tus datos personales arriba.")
     else:
         record = {
             "timestamp": datetime.utcnow().isoformat(),
-            "name": st.session_state.name,
-            "dni": st.session_state.dni,
-            "cel": st.session_state.cel,
-            "email": st.session_state.email,
-            "exp": st.session_state.exp,
-            "edu": st.session_state.edu,
-            "avatar": st.session_state.avatar,
-            "owned": ",".join(st.session_state.owned),
-            "coins": st.session_state.coins,
-            "xp": st.session_state.xp,
-            "level": st.session_state.level,
-            "answers": st.session_state.answers,
+            "name": ss.name,
+            "dni": ss.dni,
+            "cel": ss.cel,
+            "email": ss.email,
+            "exp": ss.exp,
+            "edu": ss.edu,
+            "avatar": ss.avatar,
+            "owned": ",".join(ss.owned),
+            "coins": ss.coins,
+            "xp": ss.xp,
+            "level": ss.level,
+            "answers": ss.answers
         }
-        st.session_state.submissions.append(record)
+        # Append to submissions in session and save to disk
+        ss.submissions.append(record)
+        save_json(SUBMISSIONS_FILE, ss.submissions)
+        # Remove draft for this DNI (if exists)
+        drafts = load_json(DRAFTS_FILE)
+        if ss.dni and ss.dni in drafts:
+            drafts.pop(ss.dni)
+            save_json(DRAFTS_FILE, drafts)
         st.success("Tu intento ha sido registrado. ¡Gracias! 🎉")
-        # Show final avatar composition (emoji + accessories)
-        badges = " ".join([acc["emoji"] for acc in ACCESSORIES if acc["id"] in st.session_state.owned])
-        st.markdown(f"<div class='final-avatar'><div style='font-size:120px'>{st.session_state.avatar}</div><div style='font-size:28px'>{badges}</div><div style='margin-top:8px;font-weight:600'>Gracias, nos vemos pronto 😊</div></div>", unsafe_allow_html=True)
+        # show final avatar + accessories
+        badges = " ".join([a["emoji"] for a in ACCESSORIES if a["id"] in ss.owned])
+        st.markdown(f"<div class='final-avatar'><div style='font-size:120px'>{ss.avatar}</div><div style='font-size:28px'>{badges}</div><div style='margin-top:8px;font-weight:600'>Gracias, nos vemos pronto 😊</div></div>", unsafe_allow_html=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# ---------- Admin download panel (protected) ----------
+# ---------- Admin download panel (protegido con secret) ----------
 st.markdown('<div style="height:10px"></div>', unsafe_allow_html=True)
 st.markdown('<div class="small">Si eres admin y quieres descargar los registros, ingresa la clave abajo.</div>', unsafe_allow_html=True)
 admin_key = st.text_input("Clave admin (solo descarga)", type="password", key="admin_key_input")
@@ -287,8 +359,8 @@ if admin_key:
         secret = os.getenv("ADMIN_PASS", None)
     if secret and admin_key == secret:
         st.success("Acceso admin verificado.")
-        if st.session_state.submissions:
-            df = pd.DataFrame(st.session_state.submissions)
+        if ss.submissions:
+            df = pd.DataFrame(ss.submissions)
             st.markdown(csv_download_link_from_df(df, "submissions.csv"), unsafe_allow_html=True)
             st.markdown(f"Intentos registrados: {len(df)}")
         else:
@@ -296,7 +368,8 @@ if admin_key:
     else:
         st.error("Clave incorrecta.")
 
-st.markdown('<div class="footer-note">Nota: este prototipo guarda datos en la memoria de la app. Para producción, conecta Google Sheets o una base de datos para persistencia.</div>', unsafe_allow_html=True)
+st.markdown('<div class="footer-note">Nota: guardado de borrador se hace en data/drafts.json y envíos en data/submissions.json. En Streamlit Cloud el filesystem puede ser efímero; para persistencia real usa Google Sheets o una DB. Puedo integrar eso si quieres.</div>', unsafe_allow_html=True)
 
 # End container
 st.markdown('</div>', unsafe_allow_html=True)
+
