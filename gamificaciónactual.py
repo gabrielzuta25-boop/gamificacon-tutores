@@ -110,37 +110,45 @@ ACCESSORIES = [
 # ---------- Page container ----------
 st.markdown('<div class="container">', unsafe_allow_html=True)
 
-# Top area: personal data form (always visible) + small profile card on right
-top_col_left, top_col_right = st.columns([3,1], gap="large")
-with top_col_left:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<div class="title">🎮 Gamificación — Selección de Tutores</div>', unsafe_allow_html=True)
-    st.markdown('<div class="muted">Responde con sinceridad. Tus respuestas son confidenciales y serán evaluadas internamente.</div>', unsafe_allow_html=True)
-    # Personal data form (always visible)
-    with st.form("personal_form", clear_on_submit=False):
-        st.text_input("Nombres y apellidos", key="name_input", value=st.session_state.name, help="Nombre completo")
-        st.text_input("DNI", key="dni_input", value=st.session_state.dni)
-        st.text_input("Celular", key="cel_input", value=st.session_state.cel)
-        st.text_input("Correo", key="email_input", value=st.session_state.email)
-        st.text_area("Experiencia (breve)", key="exp_input", value=st.session_state.exp, height=90)
-        st.text_area("Educación recibida (breve)", key="edu_input", value=st.session_state.edu, height=90)
-        # Avatar selector inline (emoji)
-        st.markdown("**Selecciona un avatar**")
-        cols = st.columns(3)
-        for i, a in enumerate(AVATARS):
-            if cols[i].button(f'{a["emoji"]}  {a["label"]}', key=f"pick_avatar_{a['id']}"):
-                st.session_state.avatar = a["emoji"]
-        submit_personal = st.form_submit_button("Guardar datos")
-        if submit_personal:
-            # copy form inputs to session_state
-            st.session_state.name = st.session_state.get("name_input", st.session_state.name)
-            st.session_state.dni = st.session_state.get("dni_input", st.session_state.dni)
-            st.session_state.cel = st.session_state.get("cel_input", st.session_state.cel)
-            st.session_state.email = st.session_state.get("email_input", st.session_state.email)
-            st.session_state.exp = st.session_state.get("exp_input", st.session_state.exp)
-            st.session_state.edu = st.session_state.get("edu_input", st.session_state.edu)
-            st.success("Datos guardados ✅")
-    st.markdown('</div>', unsafe_allow_html=True)
+# ---------- Personal data form (CORREGIDO) ----------
+# Coloca este bloque donde esté el formulario de datos (reemplaza el anterior)
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.markdown('<div class="title">Datos personales (confidencial)</div>', unsafe_allow_html=True)
+st.markdown('<div class="muted">Completa estos datos antes de avanzar.</div>', unsafe_allow_html=True)
+
+# Build a list of avatar choices labels for the radio
+avatar_labels = [f'{a["emoji"]}  {a["label"]}' for a in AVATARS]
+default_idx = 0
+for i,a in enumerate(AVATARS):
+    if a["emoji"] == st.session_state.avatar:
+        default_idx = i
+
+with st.form("personal_form_fixed"):
+    name_in = st.text_input("Nombres y apellidos", value=st.session_state.name)
+    dni_in = st.text_input("DNI", value=st.session_state.dni)
+    cel_in = st.text_input("Celular", value=st.session_state.cel)
+    email_in = st.text_input("Correo", value=st.session_state.email)
+    exp_in = st.text_area("Experiencia (breve)", value=st.session_state.exp, height=80)
+    edu_in = st.text_area("Educación recibida (breve)", value=st.session_state.edu, height=80)
+
+    st.markdown("**Selecciona un avatar**")
+    avatar_choice = st.radio("", avatar_labels, index=default_idx)
+
+    # Submit button for form
+    submitted_personal = st.form_submit_button("Guardar datos")
+
+if submitted_personal:
+    # Save into session_state
+    st.session_state.name = name_in
+    st.session_state.dni = dni_in
+    st.session_state.cel = cel_in
+    st.session_state.email = email_in
+    st.session_state.exp = exp_in
+    st.session_state.edu = edu_in
+    # extract emoji from selected label
+    st.session_state.avatar = avatar_choice.split()[0]
+    st.success("Datos guardados ✔️")
+
 
 with top_col_right:
     st.markdown('<div class="card">', unsafe_allow_html=True)
