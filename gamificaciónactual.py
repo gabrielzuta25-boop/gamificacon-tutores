@@ -132,11 +132,20 @@ st.subheader("1) Datos del postulante")
 if "selected_avatar_temp" not in st.session_state:
     st.session_state["selected_avatar_temp"] = None
 
-# Modal / formulario emergente para datos y selección de avatar (visual)
+# Modal / formulario emergente para datos y selección de avatar (compatible con versiones)
 open_modal = st.button("📋 Completar datos personales")
 
-if open_modal:
-    with st.modal("Completa tus datos"):
+def show_form_and_handle_submission():
+    """Función que muestra el formulario (dentro de modal si existe, si no en expander)
+    y maneja la selección de avatar y guardado en session_state."""
+    container_used = None
+    # Si st.modal existe, usamos modal; si no, usamos expander
+    if hasattr(st, "modal"):
+        container_used = st.modal("Completa tus datos")
+    else:
+        container_used = st.expander("Completa tus datos (ventana)")
+
+    with container_used:
         with st.form("form_modal_datos"):
             dni = st.text_input("DNI")
             nombres = st.text_input("Nombres y apellidos")
@@ -153,17 +162,15 @@ if open_modal:
                 try:
                     r = requests.get(url, timeout=5)
                     img = Image.open(io.BytesIO(r.content))
-                    if st.session_state.get("selected_avatar_temp") == seed:
-                        c.image(img, caption=seed, use_column_width=False)
-                        c.markdown(f"<div class='avatar-selected'>Seleccionado</div>", unsafe_allow_html=True)
-                    else:
-                        c.image(img, caption=seed, use_column_width=False)
+                    # dibujamos la imagen (si está seleccionada, no cambia la lógica visual excepto el texto)
+                    c.image(img, caption=seed, use_column_width=False)
                 except Exception:
                     c.write("Avatar")
                 if c.button("Elegir", key=f"avatar_btn_{seed}"):
                     st.session_state["selected_avatar_temp"] = seed
 
             enviar = st.form_submit_button("Guardar y cerrar")
+
         if enviar:
             # guardar datos en session_state para uso posterior
             st.session_state["dni"] = dni
@@ -176,7 +183,18 @@ if open_modal:
             chosen = st.session_state.get("selected_avatar_temp", AVATAR_SEEDS[0])
             st.session_state["avatar_choice"] = chosen
             st.success("Datos guardados correctamente ✅")
+            # recargar la app para que muestre el resumen fuera del formulario
             st.experimental_rerun()
+
+# Ejecutar el flujo si el usuario hizo click
+if open_modal:
+    try:
+        show_form_and_handle_submission()
+    except Exception as e:
+        # En caso de error inesperado, mostrar mensaje amistoso y pedir revisar logs
+        st.error("Ocurrió un error al abrir el formulario. Revisa los logs en Streamlit Cloud (Manage app).")
+        # también imprimimos en la app (útil para debug corto) sin exponer datos sensibles
+        st.write(f"Error técnico: {e}")
 
 # Mostrar resumen si ya hay datos guardados
 if st.session_state.get("nombres"):
@@ -255,8 +273,3 @@ if st.button("Enviar y generar resultado (descargar CSV)"):
 
 st.markdown("___")
 st.caption("Prototipo desarrollado por Gabriel — edición y uso para presentación. No use datos sensibles en demos públicas.")
-
-
-st.markdown("___")
-st.caption("Prototipo desarrollado por Gabriel — edición y uso para presentación. No use datos sensibles en demos públicas.")
-
